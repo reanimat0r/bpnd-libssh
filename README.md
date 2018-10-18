@@ -18,6 +18,21 @@ apt-get install -y libffi-dev libssl-dev
 pip3 install paramiko
 ```
 
+# Install with docker
+
+To build docker container:
+
+```
+./dockerbuild.sh
+```
+
+To run docker container:
+
+```
+./dockerrun.sh
+```
+
+
 # Usage examples
 
 Scan 192.168.0.1 on port 22:
