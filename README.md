@@ -1,6 +1,7 @@
 # bpnd-libssh
 
-bpnd-libssh is a multi-threaded, remote scanner for CVE-2018-10933.  
+
+blueintel bpnd-libssh is a multi-threaded, remote scanner for CVE-2018-10933.  
 
 # Requirements
 
