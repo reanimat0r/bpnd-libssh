@@ -113,7 +113,7 @@ def main():
         sys.exit(-1)
 
     try:
-        targetports = [int(a) for a in args.port.split(',') ]
+        targetports = set([int(a) for a in args.port.split(',') ])
     except Exception as e:
         print('Invalid port specification. Example: -p 22,2222')
         sys.exit(-1)
@@ -129,8 +129,28 @@ def main():
         sys.exit(-1)
     else:
         targets=list()
+        c=1
         for line in sys.stdin:
-            targets.append(line.strip())
+            line=line.strip()
+            if not line: continue
+            if ':' in line:
+                try:
+                    host, port = line.split(':')
+                except Exception as e:
+                    print('Invalid target specification on line {}'.format(c))
+                    sys.exit(-1)
+                ports=port.split(',')
+                [targetports.add(int(a)) for a in ports]
+            else:
+                host=line
+
+            try:
+                curLineTargets=ipaddress.ip_network(host)
+            except Exception as e:
+                print('Invalid target specification on line {}'.format(c))
+                sys.exit(-1)
+            [targets.append(str(a)) for a in curLineTargets]
+            c+=1
 
 
 
